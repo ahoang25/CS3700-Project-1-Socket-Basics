@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import socket
+import ssl
+import sys
+import random
+
+# default ports
+DEFAULT_PORT = 27993
+DEFAULT_TLS_PORT = 27994
+
+# load the word list from a file
+def load_wordlist(filename):
+    with open(filename, 'r') as file:
+        return [line.strip() for line in file if line.strip()]
+
+# filter words based on the feedback given (2, 1, or 0)
+def filter_words(potential_words, guess, feedback):
+    for i, fb in enumerate(feedback):
+        letter = guess[i]
+        if fb == 2:  # if letter is in correct position
+            potential_words = [word for word in potential_words if word[i] == letter]
+        elif fb == 1:  # if letter is in wrong position
+            potential_words = [word for word in potential_words if letter in word and word[i] != letter]
+        else:  # if the letter not in the word
+	       # get rid of words containing this letter if it is not repeated in guess
+            if guess.count(letter) == 1:  # Exclude if not repeated in guess
+                potential_words = [word for word in potential_words if letter not in word]
+            else:
+                if all(f == 0 for j, f in enumerate(feedback) if guess[j] == letter):
+                    potential_words = [word for word in potential_words if word.count(letter) < guess.count(letter)]
+    return potential_words
+
+# makes guess based on the list of possible words from the filter words
+def guess_word(potential_words):
+    if potential_words:
+        return random.choice(potential_words)
+    else:
+        return "error"  # handle empty potential_words list
+
+# sends JSON message through socket and encodes it
+def send_json_message(socket, data):
+    message = json.dumps(data) + "\n"
+    socket.sendall(message.encode())
+
+# receives JSON message from socket and decodes it
+def receive_json_message(socket):
+    data = ""
+    while not data.endswith("\n"):
+        data += socket.recv(4096).decode()
+    return json.loads(data)
+
+# handles the logic of the Wordle Game
+def main(hostname, Northeastern_username, port, use_ssl):
+    potential_words = load_wordlist('project1-words.txt')
+
+    if not potential_words:
+        print('Error: Word list is empty.')
+        sys.exit(1)
+
+    # setup socket connection, 
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if use_ssl:
+        context = ssl.create_default_context()
+        s = context.wrap_socket(s, server_hostname=hostname)
+    s.connect((hostname, port))
+
+    try:
+        game_id = ""
+
+        send_json_message(s, {"type": "hello", "northeastern_username": Northeastern_username})
+
+	# Main game loop
+        while True:
+            response = receive_json_message(s)
+            if response['type'] == 'start':
+                game_id = response['id']
+                guess = guess_word(potential_words)
+                send_json_message(s, {"type": "guess", "id": game_id, "word": guess})
+            elif response['type'] == 'retry':
+                feedback = response['guesses'][-1]['marks']
+                potential_words = filter_words(potential_words, guess, feedback)
+                guess = guess_word(potential_words)
+                send_json_message(s, {"type": "guess", "id": game_id, "word": guess})
+            elif response['type'] == 'bye':
+		# the game ends when the secret flag is given by the server
+                print(response['flag'])
+                break
+            else:
+                print('Unexpected response from server:', response)
+                break
+    except Exception as e:
+        print(f'Error during game: {e}')
+    finally:
+        s.close()
+
+if __name__ == "__main__":
+    # parse command-line arguments
+    arg_parser = argparse.ArgumentParser(description='Wordle game client')
+    arg_parser.add_argument('-p', '--port', type=int, default=None)
+    arg_parser.add_argument('-s', '--ssl', action='store_true')
+    arg_parser.add_argument('hostname')
+    arg_parser.add_argument('username')
+    args = arg_parser.parse_args()
+
+    # Determine the correct port to use
+    port = args.port if args.port else (DEFAULT_TLS_PORT if args.ssl else DEFAULT_PORT)
+
+    main(args.hostname, args.username, port, args.ssl)
+
