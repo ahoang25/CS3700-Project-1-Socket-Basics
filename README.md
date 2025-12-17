@@ -1,6 +1,7 @@
 # Wordle Game Client
 
 Contributors: Andrew Hoang
+Date: January 22, 2024
 
 In this project the goal was to implement a client program that plays a variant of the gussing word game called Wordle. The program will make guesses for the secret word and the server will give you information about how close your guess is. Once the client guesses the correct word, it will return a secret flag to indicate that the program has run successfully.
 
